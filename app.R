@@ -1,100 +1,129 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
+###################################
+### Installing/loading packages ###
+###################################
 if (!require('shiny')) install.packages('shiny'); library(shiny)
 if (!require('shinyjs')) install.packages('shinyjs'); library(shinyjs)
 if (!require('DT')) install.packages('DT'); library(DT)
 if (!require('googlesheets4')) install.packages('googlesheets4'); library(googlesheets4)
 
-solve.cypher = function(text) {
-  text = toupper(gsub(" ","",paste(text,collapse="")))
-  text = gsub("G","0",text)
-  text = gsub("H","1",text)
-  text = gsub("I","2",text)
-  text = gsub("J","3",text)
-  text = gsub("K","4",text)
-  text = gsub("L","5",text)
-  text = gsub("M","6",text)
-  text = gsub("N","7",text)
-  text = gsub("O","8",text)
-  text = gsub("P","9",text)
-  text = gsub("Q","A",text)
-  text = gsub("R","B",text)
-  text = gsub("S","C",text)
-  text = gsub("T","D",text)
-  text = gsub("U","E",text)
-  text = gsub("V","F",text)
-  text = gsub("W","0",text)
-  text = gsub("X","1",text)
-  text = gsub("Y","2",text)
-  text = gsub("Z","3",text)
-  tolower(text)
+#################
+### Functions ###
+#################
+### convert string into a vector of characters
+s2c = function(x) {
+  strsplit(x,"")[[1]]
 }
-test.ideas = function(temp, already.tried = NULL) {
-  t.lens = sapply(temp,length)
-  temp = temp[which(t.lens != 0)]
 
-  pos.results = prod(sapply(temp,length))
-  result = temp[[1]]
-  for (i in 2:length(temp)) {
-    new.new.result = NULL
-    for (j in 1:length(temp[[i]])) {
-      new.result = NULL
-      for (k in result) {
-        new.result = c(new.result, paste(k, temp[[i]][j]))
+### convert vector of characters into a string
+c2s = function(x) {
+  paste(x,collapse="")
+}
+
+### return last element of a vector
+last = function(x) {
+  x[length(x)]
+}
+
+### removes all non-hex characters from a string (keeping a:)
+rm.hex = function(x) {
+  x = s2c(x)
+  c2s(x[which(x %in% c(0:9,LETTERS[1:6],letters[1:6]))])
+}
+
+### convert a string or vector of strings into a private key using the cipher
+solve.cipher = function(text) {
+  text = tolower(gsub(" ","",paste(text,collapse="")))
+  text = gsub("g","0",text)
+  text = gsub("h","1",text)
+  text = gsub("i","2",text)
+  text = gsub("j","3",text)
+  text = gsub("k","4",text)
+  text = gsub("l","5",text)
+  text = gsub("m","6",text)
+  text = gsub("n","7",text)
+  text = gsub("o","8",text)
+  text = gsub("p","9",text)
+  text = gsub("q","a",text)
+  text = gsub("r","b",text)
+  text = gsub("s","c",text)
+  text = gsub("t","d",text)
+  text = gsub("u","e",text)
+  text = gsub("v","f",text)
+  text = gsub("w","0",text)
+  text = gsub("x","1",text)
+  text = gsub("y","2",text)
+  text = gsub("z","3",text)
+  rm.hex(text)
+}
+
+### convert a private key to a wallet address
+key2wallet = function(key) {
+  last(strsplit(system(paste("python retrieve_wallet.py",key), intern=TRUE)," ")[[1]])
+}
+
+### input ideas should be a list with each item of the list corresponding to a
+### part of the clue and containing a vector of strings (each an idea for that part)
+### input 'already.tried' should be a vector of strings corresponding to tested
+### ciphers to exclude from the results
+test.ideas = function(ideas, already.tried = NULL) {
+  t.lens = sapply(ideas,length)          # number of ideas for each part
+  ideas = ideas[which(t.lens != 0)]      # remove parts for which no ideas are supplied
+  if (length(ideas) == 0) {return(NULL)} # if no ideas, return NULL
+
+  ### create vector of all possible combinations of ideas
+  result = ideas[[1]]
+  if (length(ideas) > 1) {
+    for (i in 2:length(ideas)) {
+      new.new.result = NULL
+      for (j in 1:length(ideas[[i]])) {
+        new.result = NULL
+        for (k in result) {
+          new.result = c(new.result, paste(k, ideas[[i]][j]))
+        }
+        new.new.result = c(new.new.result, new.result)
       }
-      new.new.result = c(new.new.result, new.result)
+      result = new.new.result
     }
-    result = new.new.result
   }
-  #print(result)
-  solved = sapply(result, solve.cypher)
+
+  ### solve for keys using the cipher
+  solved = sapply(result, solve.cipher)
   solved.count = sapply(solved, nchar)
 
+  ### subset for correct lengths and untested ciphers
   correct = which(solved.count == 64)
   untested = which(!solved %in% already.tried)
   if (length(correct) != 0) {
     correct = correct[which(correct %in% untested)]
   }
+  if (length(correct) == 0) {return(NULL)}
 
-  if (length(correct) == 0) {
-    NULL
-  } else {
-    result = data.frame(cypher = as.character(solved[correct]),
-                        idea = names(solved[correct]))
-    result$wallet.ID = sapply(result$cypher, FUN = function(cypher) {
-      temp = system(paste("python retrieve_wallet.py",cypher), intern=TRUE)
-      temp = strsplit(temp," ")[[1]]
-      temp[length(temp)]
-    })
-    result
-  }
-}
-row_col_to_cell <- function(row, col) {
-  # Convert column number to letters (e.g., 1 -> A, 2 -> B, ...)
-  col_letter <- LETTERS[col]
-
-  # Combine row and column to form the cell specification
-  cell_spec <- paste0(col_letter, row)
-
-  return(cell_spec)
+  result = data.frame(key = as.character(solved[correct]),
+                      idea = names(solved[correct]))
+  result$wallet = sapply(result$key, key2wallet)
+  result
 }
 
-google.sheet <- read_sheet('https://docs.google.com/spreadsheets/d/1YNH8akuTMSgwjsUoISUfxJhK4aYamlG7Firm1-YXrvg/edit#gid=0',
-                           sheet = 1)
-google.sheet <- as.data.frame(google.sheet)
+### load table from the google spreadsheet
+load.google.sheet = function() {
+  assign("google.sheet",
+         as.data.frame(read_sheet('1YNH8akuTMSgwjsUoISUfxJhK4aYamlG7Firm1-YXrvg',sheet = 1)),
+         envir = globalenv())
+}
 
-# Define UI for application that draws a histogram
+################################
+### Loading the google sheet ###
+################################
+load.google.sheet()
+
+######################
+### Application UI ###
+######################
 ui <- fluidPage(
   useShinyjs(),
 
     # Application title
-    titlePanel("Goose cypher solver"),
+    titlePanel("Goose cipher solver"),
 
     # Sidebar with a slider input for number of bins
     sidebarLayout(
@@ -146,22 +175,10 @@ ui <- fluidPage(
     )
 )
 
-# Define server logic required to draw a histogram
+##########################
+### Application server ###
+##########################
 server <- function(input, output) {
-
-  ### Hiding some elements to begin
-  hide("full_clue_text")
-  hide("part_1_text")
-  hide("part_2_text")
-  hide("part_3_text")
-  hide("part_4_text")
-  hide("part_5_text")
-  hide("part_6_text")
-  hide("part_7_text")
-  hide("part_8_text")
-  hide("part_9_text")
-  hide("part_10_text")
-  hide("mark_tested_button")
 
   ### Initializing labels
   output$part_1_label = renderText("<b>Part 1</b>")
@@ -175,20 +192,6 @@ server <- function(input, output) {
   output$part_9_label = renderText("<b>Part 9</b>")
   output$part_10_label = renderText("<b>Part 10</b>")
 
-  ### Initializing text
-  output$output_text = renderText("")
-  output$full_clue_text = renderText("")
-  output$part_1_text = renderText("")
-  output$part_2_text = renderText("")
-  output$part_3_text = renderText("")
-  output$part_4_text = renderText("")
-  output$part_5_text = renderText("")
-  output$part_6_text = renderText("")
-  output$part_7_text = renderText("")
-  output$part_8_text = renderText("")
-  output$part_9_text = renderText("")
-  output$part_10_text = renderText("")
-
   ### Initializing output table
   output$output_table = renderDT({
     datatable(NULL)
@@ -201,10 +204,7 @@ server <- function(input, output) {
 
   ### Reload data from the google spreadsheet
   observeEvent(input$load_sheet_button, {
-    google.sheet <- read_sheet('https://docs.google.com/spreadsheets/d/1YNH8akuTMSgwjsUoISUfxJhK4aYamlG7Firm1-YXrvg/edit#gid=0',
-                    sheet = 1)
-    google.sheet <- as.data.frame(google.sheet)
-    assign("google.sheet",google.sheet,".GlobalEnv")
+    load.google.sheet()
 
     # keep selected clue the same unless it has been removed from the google doc
     if (input$clue_selector %in% c("none",paste("Clue",substring(colnames(google.sheet)[grep("-clue",colnames(google.sheet))],1,1)))) {
@@ -254,8 +254,8 @@ server <- function(input, output) {
       hide("output_table")
       hide("mark_tested_button")
     } else {
-      temp.table <- test.ideas(options,
-                              already.tried = strsplit(input$tested_answers,"\n",TRUE)[[1]])
+      temp.table <- test.ideas(options, already.tried = strsplit(input$tested_answers,"\n",TRUE)[[1]])
+
       if (is.null(temp.table)) {
         output$output_text = renderText("No new correct length solutions found.")
         hide("output_table")
@@ -263,12 +263,12 @@ server <- function(input, output) {
       } else {
         show("output_table")
         show("mark_tested_button")
-        if (correct.wallet %in% temp.table$wallet.ID) {
+        if (correct.wallet %in% temp.table$wallet) {
           output$output_text = renderText(paste("Congratulations! You found the goose! The correct private key is:",
-                                                temp.table$cypher[which(temp.table$wallet.ID == correct.wallet)]))
+                                                temp.table$key[which(temp.table$wallet == correct.wallet)]))
           output$output_table = renderDataTable({
             temp.table
-          }, selection = list(mode = 'multiple', selected = which(temp.table$wallet.ID == correct.wallet)))
+          }, selection = list(mode = 'multiple', selected = which(temp.table$wallet == correct.wallet)))
         } else {
           output$output_text = renderText("Correct wallet ID has not been found.")
           output$output_table = renderDT({
@@ -276,11 +276,7 @@ server <- function(input, output) {
           })
         }
       }
-
     }
-
-
-
   })
 
   ### Select clue
@@ -384,8 +380,8 @@ server <- function(input, output) {
     selected.clue = which(colnames(google.sheet) == selected.clue)
     correct.wallet = google.sheet[2,selected.clue]
 
-    tested.cypher = temp.table$cypher[input$output_table_rows_selected]
-    new.val = paste(input$tested_answers,paste(tested.cypher,collapse="\n"),sep="\n")
+    tested.cipher = temp.table$key[input$output_table_rows_selected]
+    new.val = paste(input$tested_answers,paste(tested.cipher,collapse="\n"),sep="\n")
     while (substring(new.val,1,1) == "\n") {new.val = substring(new.val,2)}
 
     ## update in app
@@ -403,12 +399,12 @@ server <- function(input, output) {
     } else {
       show("output_table")
       show("mark_tested_button")
-      if (correct.wallet %in% temp.table$wallet.ID) {
+      if (correct.wallet %in% temp.table$wallet) {
         output$output_text = renderText(paste("Congratulations! You found the goose! The correct private key is:",
-                                              temp.table$cypher[which(temp.table$wallet.ID == correct.wallet)]))
+                                              temp.table$key[which(temp.table$wallet == correct.wallet)]))
         output$output_table = renderDataTable({
           temp.table
-        }, selection = list(mode = 'multiple', selected = which(temp.table$wallet.ID == correct.wallet)))
+        }, selection = list(mode = 'multiple', selected = which(temp.table$wallet == correct.wallet)))
       } else {
         output$output_text = renderText("Correct wallet ID has not been found.")
         output$output_table = renderDT({
