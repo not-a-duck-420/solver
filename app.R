@@ -1,10 +1,23 @@
+#
+# useful link for getting python to run correctly:
+# https://github.com/ranikay/shiny-reticulate-app#deploying-to-shinyapps.io
 ###################################
 ### Installing/loading packages ###
 ###################################
+# reticulate::virtualenv_create(envname = 'python39_env')
+reticulate::virtualenv_create(envname = 'python3_env')
+reticulate::virtualenv_install('python3_env',
+                               packages = c('numpy'))  # <- Add other packages here, if needed
+
 if (!require('shiny')) install.packages('shiny'); library(shiny)
 if (!require('shinyjs')) install.packages('shinyjs'); library(shinyjs)
 if (!require('DT')) install.packages('DT'); library(DT)
-if (!require('googlesheets4')) install.packages('googlesheets4'); library(googlesheets4)
+if (!require('reticulate')) install.packages('reticulate'); library(reticulate)
+
+### load python stuff
+use_virtualenv('python3_env', required = TRUE)
+py_install(c('web3','eth_account'))
+source_python("py_functions.py")
 
 #################
 ### Functions ###
@@ -56,11 +69,6 @@ solve.cipher = function(text) {
   rm.hex(text)
 }
 
-### convert a private key to a wallet address
-key2wallet = function(key) {
-  last(strsplit(system(paste("python retrieve_wallet.py",key), intern=TRUE)," ")[[1]])
-}
-
 ### input ideas should be a list with each item of the list corresponding to a
 ### part of the clue and containing a vector of strings (each an idea for that part)
 ### input 'already.tried' should be a vector of strings corresponding to tested
@@ -100,15 +108,15 @@ test.ideas = function(ideas, already.tried = NULL) {
 
   result = data.frame(key = as.character(solved[correct]),
                       idea = names(solved[correct]))
-  result$wallet = sapply(result$key, key2wallet)
+  result$wallet = sapply(result$key, get_ethereum_address)
   result
 }
 
 ### load table from the google spreadsheet
 load.google.sheet = function() {
-  assign("google.sheet",
-         as.data.frame(read_sheet('1YNH8akuTMSgwjsUoISUfxJhK4aYamlG7Firm1-YXrvg',sheet = 1)),
-         envir = globalenv())
+  temp = read.csv("https://docs.google.com/spreadsheets/d/1YNH8akuTMSgwjsUoISUfxJhK4aYamlG7Firm1-YXrvg/export?format=csv")
+  colnames(temp) = gsub("X","",gsub(".","-",colnames(temp),fixed=TRUE))
+  assign("google.sheet",temp,envir = globalenv())
 }
 
 ################################
@@ -168,8 +176,7 @@ ui <- fluidPage(
         ),
 
         mainPanel(
-          textOutput("output_text"),
-          actionButton("mark_tested_button","Mark as tested"),
+          verbatimTextOutput("output_text"),
           DTOutput("output_table")
         )
     )
@@ -214,6 +221,9 @@ server <- function(input, output) {
     }
     updateSelectInput(inputId = "clue_selector",
                       choices = c("none",paste("Clue",substring(colnames(google.sheet)[grep("-clue",colnames(google.sheet))],1,1))),
+                      selected = "none")
+    updateSelectInput(inputId = "clue_selector",
+                      choices = c("none",paste("Clue",substring(colnames(google.sheet)[grep("-clue",colnames(google.sheet))],1,1))),
                       selected = t.selected)
   })
 
@@ -247,7 +257,7 @@ server <- function(input, output) {
 
     selected.clue = paste(substring(input$clue_selector,nchar(input$clue_selector)),"-clue",sep="")
     selected.clue = which(colnames(google.sheet) == selected.clue)
-    correct.wallet = google.sheet[2,selected.clue]
+    correct.wallet = gsub(" ","",google.sheet[2,selected.clue])
 
     if (length(unlist(options)) == 0) {
       output$output_text = renderText("No ideas input.")
@@ -255,6 +265,13 @@ server <- function(input, output) {
       hide("mark_tested_button")
     } else {
       temp.table <- test.ideas(options, already.tried = strsplit(input$tested_answers,"\n",TRUE)[[1]])
+
+      ### Add incorrect ciphers to the list of tested ciphers
+      tested.cipher = temp.table$key[which(temp.table$wallet != correct.wallet)]
+      new.val = paste(input$tested_answers,paste(tested.cipher,collapse="\n"),sep="\n")
+      while (substring(new.val,1,1) == "\n") {new.val = substring(new.val,2)}
+      while (gsub("\n\n","\n",new.val,fixed=TRUE) != new.val) {new.val = gsub("\n\n","\n",new.val,fixed=TRUE)}
+      updateTextAreaInput(inputId = "tested_answers", value = new.val)
 
       if (is.null(temp.table)) {
         output$output_text = renderText("No new correct length solutions found.")
@@ -264,11 +281,14 @@ server <- function(input, output) {
         show("output_table")
         show("mark_tested_button")
         if (correct.wallet %in% temp.table$wallet) {
-          output$output_text = renderText(paste("Congratulations! You found the goose! The correct private key is:",
+          congrats.message = sample(c("Honk! Honk!","duck... duck... GOOSE!!!",
+                                      "Goose on the loose!","Congratulations!",
+                                      "Take a gander..."),1)
+
+          output$output_text = renderText(paste(congrats.message,"You found the goose! The correct private key is:\n",
                                                 temp.table$key[which(temp.table$wallet == correct.wallet)]))
           output$output_table = renderDataTable({
-            temp.table
-          }, selection = list(mode = 'multiple', selected = which(temp.table$wallet == correct.wallet)))
+            temp.table},selection = list(mode = 'multiple', selected = which(temp.table$wallet == correct.wallet)))
         } else {
           output$output_text = renderText("Correct wallet ID has not been found.")
           output$output_table = renderDT({
@@ -281,6 +301,10 @@ server <- function(input, output) {
 
   ### Select clue
   observeEvent(input$clue_selector, {
+    output$output_text = renderText("")
+    hide("mark_tested_button")
+    hide("output_table")
+
     if (input$clue_selector != "none") {
       selected.clue = paste(substring(input$clue_selector,nchar(input$clue_selector)),"-clue",sep="")
       selected.clue = which(colnames(google.sheet) == selected.clue)
@@ -308,12 +332,10 @@ server <- function(input, output) {
       updateTextAreaInput(inputId = "input_9", value = google.sheet[11,selected.clue+1])
       updateTextAreaInput(inputId = "input_10", value = google.sheet[12,selected.clue+1])
 
-      updateTextAreaInput(inputId = "tested_answers", value = google.sheet[13,selected.clue+1])
-
       show("full_clue_text")
 
       for (i in 1:10) {
-        if (i %in% which(is.na(google.sheet[3:12,selected.clue]))) {
+        if (i %in% which(google.sheet[3:12,selected.clue] == "")) {
           hide(paste("part",i,"label",sep="_"))
           hide(paste("part",i,"text",sep="_"))
           hide(paste("input",i,sep="_"))
@@ -356,76 +378,6 @@ server <- function(input, output) {
         show(paste("input",i,sep="_"))
       }
     }
-  })
-
-  ### Mark as tested
-  observeEvent(input$mark_tested_button, {
-
-    options = list()
-    options[[1]] = strsplit(input$input_1,"\n",TRUE)[[1]]
-    options[[2]] = strsplit(input$input_2,"\n",TRUE)[[1]]
-    options[[3]] = strsplit(input$input_3,"\n",TRUE)[[1]]
-    options[[4]] = strsplit(input$input_4,"\n",TRUE)[[1]]
-    options[[5]] = strsplit(input$input_5,"\n",TRUE)[[1]]
-    options[[6]] = strsplit(input$input_6,"\n",TRUE)[[1]]
-    options[[7]] = strsplit(input$input_7,"\n",TRUE)[[1]]
-    options[[8]] = strsplit(input$input_8,"\n",TRUE)[[1]]
-    options[[9]] = strsplit(input$input_9,"\n",TRUE)[[1]]
-    options[[10]] = strsplit(input$input_10,"\n",TRUE)[[1]]
-
-    temp.table <- test.ideas(options,
-                             already.tried = strsplit(input$tested_answers,"\n",TRUE)[[1]])
-
-    selected.clue = paste(substring(input$clue_selector,nchar(input$clue_selector)),"-clue",sep="")
-    selected.clue = which(colnames(google.sheet) == selected.clue)
-    correct.wallet = google.sheet[2,selected.clue]
-
-    tested.cipher = temp.table$key[input$output_table_rows_selected]
-    new.val = paste(input$tested_answers,paste(tested.cipher,collapse="\n"),sep="\n")
-    while (substring(new.val,1,1) == "\n") {new.val = substring(new.val,2)}
-
-    ## update in app
-    updateTextAreaInput(inputId = "tested_answers",
-                        value = new.val)
-
-    ## re-load table
-    temp.table <- test.ideas(options,
-                             already.tried = strsplit(new.val,"\n",TRUE)[[1]])
-
-    if (is.null(temp.table)) {
-      output$output_text = renderText("No new correct length solutions found.")
-      hide("output_table")
-      hide("mark_tested_button")
-    } else {
-      show("output_table")
-      show("mark_tested_button")
-      if (correct.wallet %in% temp.table$wallet) {
-        output$output_text = renderText(paste("Congratulations! You found the goose! The correct private key is:",
-                                              temp.table$key[which(temp.table$wallet == correct.wallet)]))
-        output$output_table = renderDataTable({
-          temp.table
-        }, selection = list(mode = 'multiple', selected = which(temp.table$wallet == correct.wallet)))
-      } else {
-        output$output_text = renderText("Correct wallet ID has not been found.")
-        output$output_table = renderDT({
-          datatable(temp.table)
-        })
-      }
-    }
-  })
-
-  ### Hide mark as tested if any changes made to input boxes
-  observeEvent(c(input$input_1,
-                 input$input_2,
-                 input$input_3,
-                 input$input_4,
-                 input$input_5,
-                 input$input_6,
-                 input$input_7,
-                 input$input_8,
-                 input$input_9,
-                 input$input_10),{
-    hide("mark_tested_button")
   })
 
   ### Clear list of tested keys
