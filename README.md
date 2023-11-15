@@ -12,8 +12,11 @@ Run the following comman in terminal to download the files into a folder
 > git clone https://github.com/not-a-duck-420/solver.git
 
 ## Running
+Change directory to the downloaded folder
+> cd PATH/TO/solver/
+
 Then run the script by typing
-> Rscript PATH/TO/solver/app.R
+> Rscript app.R
 
 In terminal, it should say something like: "Listening on http://127.0.0.1:7641"
 Go to that address in your web browser.
