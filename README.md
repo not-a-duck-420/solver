@@ -8,7 +8,8 @@ Google spreadsheet: https://docs.google.com/spreadsheets/d/1YNH8akuTMSgwjsUoISUf
  > pip install web3
 
 ## Installation
-Just download and save into a folder somewhere...
+Just download and save into a folder somewhere or run the following in terminal:
+> git clone not-a-duck-420/solver
 
 ## Running
 In terminal, navigate to the folder using the command:
